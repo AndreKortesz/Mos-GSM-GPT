@@ -9,6 +9,19 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from openai import OpenAI
 
+import re
+
+def format_answer(text: str) -> str:
+    # Находим строки вида "### ..."
+    def repl(match):
+        title = match.group(1).strip()
+        return f"**{title}**"  # жирный текст, без ###
+    
+    # заменяем все заголовки "### ..." на жирный текст
+    text = re.sub(r"^###\s*(.*)", repl, text, flags=re.MULTILINE)
+    return text
+
+
 # ===== ENV =====
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
@@ -187,8 +200,8 @@ async def cb_main(q: CallbackQuery):
     c = db()
     ensure_active_chat(c, q.from_user.id)
     await q.message.edit_text(
-        "Сейчас ты в главном меню"
-        "Пиши вопрос или пользуйся меню ниже", 
+        "👋 Привет! Я *ChatGPT для красавчиков из Mos-GSM* в Telegram.\n"
+        "Пиши вопрос или пользуйся меню ниже.",
         reply_markup=menu_main())
     await q.answer()
 
@@ -284,12 +297,13 @@ async def chat(m: Message):
             messages=[system_prompt] + msgs
         )
         answer = resp.choices[0].message.content
+        answer = format_answer(answer)  # 🔹 вот тут добавляем фильтрацию
         usage = resp.usage.total_tokens if resp.usage else est_in
 
         add_msg(c, uid, chat_id, "assistant", answer)
         add_tokens(c, uid, usage)
 
-        await m.reply(answer, reply_markup=reply_menu())
+        await m.reply(format_answer(answer), reply_markup=reply_menu())
     except Exception as e:
         await m.reply(f"❌ Ошибка OpenAI: `{e}`", reply_markup=reply_menu())
 
