@@ -99,6 +99,7 @@ def menu_main():
     return InlineKeyboardMarkup(inline_keyboard=[
         [
             InlineKeyboardButton(text="🆕 Новый диалог", callback_data="new_chat"),
+            InlineKeyboardButton(text="📜 Мои диалоги", callback_data="list_chats"),
         ],
         [
             InlineKeyboardButton(text="👤 Профиль", callback_data="menu_profile"),
@@ -132,7 +133,7 @@ async def cmd_start(m: Message):
     c = db()
     ensure_active_chat(c, m.from_user.id)
     await m.reply(
-        "👋 Привет! Я *ChatGPT (GPT‑4o)* в Telegram.\n"
+        "👋 Привет! Я *ChatGPT для красавчиков из Mos-GSM* в Telegram.\n"
         "Пиши вопрос или пользуйся меню ниже.",
         reply_markup=menu_main()
     )
@@ -185,7 +186,10 @@ async def use_cmd(m: Message):
 async def cb_main(q: CallbackQuery):
     c = db()
     ensure_active_chat(c, q.from_user.id)
-    await q.message.edit_text("Главное меню. Выберите действие:", reply_markup=menu_main())
+    await q.message.edit_text(
+        "Сейчас ты в главном меню"
+        "Пиши вопрос или пользуйся меню ниже", 
+        reply_markup=menu_main())
     await q.answer()
 
 @dp.callback_query(F.data == "menu_manage")
