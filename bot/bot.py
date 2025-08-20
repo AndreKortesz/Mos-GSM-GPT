@@ -97,16 +97,13 @@ def add_tokens(c, uid, tokens):
 # ===== UI =====
 def menu_main():
     return InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="💬 Диалог с ИИ", callback_data="chat_mode")],
         [
-            InlineKeyboardButton(text="🤖 Управление", callback_data="menu_manage"),
             InlineKeyboardButton(text="🆕 Новый диалог", callback_data="new_chat"),
         ],
         [
             InlineKeyboardButton(text="👤 Профиль", callback_data="menu_profile"),
             InlineKeyboardButton(text="📕 База знаний", callback_data="menu_kb"),
         ],
-        [InlineKeyboardButton(text="🏠 В главное меню", callback_data="menu_main")]  # сам на себя – для единообразия
     ])
 
 def menu_manage():
