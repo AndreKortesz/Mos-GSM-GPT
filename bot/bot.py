@@ -1,7 +1,11 @@
+# стандартная библиотека
 import asyncio
 import os
 import sqlite3
 import time
+import re
+
+# сторонние библиотеки
 from aiogram import Bot, Dispatcher, F
 from aiogram.filters import Command
 from aiogram.types import Message, CallbackQuery
@@ -9,18 +13,32 @@ from aiogram.client.default import DefaultBotProperties
 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from openai import OpenAI
 
-import re
-
 def format_answer(text: str) -> str:
-    # Находим строки вида "### ..."
-    def repl(match):
-        title = match.group(1).strip()
-        return f"**{title}**"  # жирный текст, без ###
-    
-    # заменяем все заголовки "### ..." на жирный текст
-    text = re.sub(r"^###\s*(.*)", repl, text, flags=re.MULTILINE)
-    return text
+    lines = text.splitlines()
+    in_code = False
+    out = []
 
+    header_re = re.compile(r"^(#{1,6})\s+(.+)$")  # # .. ## .. ###### ..
+
+    for line in lines:
+        stripped = line.strip()
+        # переключаемся, если встретили границу кода ``` (любой язык)
+        if stripped.startswith("```"):
+            in_code = not in_code
+            out.append(line)
+            continue
+
+        if not in_code:
+            m = header_re.match(line)
+            if m:
+                # берём текст заголовка и делаем жирным
+                title = m.group(2).strip()
+                out.append(f"**{title}**")
+                continue
+
+        out.append(line)
+
+    return "\n".join(out)
 
 # ===== ENV =====
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
