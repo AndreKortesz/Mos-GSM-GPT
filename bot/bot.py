@@ -322,7 +322,11 @@ async def chat(m: Message):
         add_msg(c, uid, chat_id, "assistant", answer)
         add_tokens(c, uid, usage)
 
-        await m.reply(format_answer(answer), reply_markup=reply_menu())
+        await m.reply(
+    format_answer(answer),
+    reply_markup=reply_menu(),
+    parse_mode="Markdown"
+)
     except Exception as e:
         await m.reply(f"❌ Ошибка OpenAI: `{e}`", reply_markup=reply_menu())
 
