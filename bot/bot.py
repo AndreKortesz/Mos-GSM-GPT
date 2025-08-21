@@ -307,6 +307,237 @@ async def chat(m: Message):
     except Exception as e:
         await m.reply(f"❌ Ошибка OpenAI: `{e}`", reply_markup=reply_menu())
 
+#Ниже то, что касается отрпавки и получения файлов
+
+import aiofiles
+from io import BytesIO
+from PIL import Image
+from PyPDF2 import PdfReader
+from docx import Document as DocxDocument
+import base64
+
+MAX_FILE_MB = int(os.getenv("MAX_FILE_MB", "50"))
+OCR_ENGINE = os.getenv("OCR_ENGINE", "openai").lower()
+OCR_LANG = os.getenv("OCR_LANG", "rus+eng")
+
+async def download_by_file_id(file_id: str, prefix: str = "file") -> tuple[str, bytes, str]:
+    """
+    Скачивает файл по file_id. Возвращает: (имя_файла, bytes, ext)
+    """
+    f = await bot.get_file(file_id)
+    ext = os.path.splitext(f.file_path)[1] or ""
+    # aiogram v3: скачивание по file_path
+    bio = BytesIO()
+    await bot.download_file(f.file_path, destination=bio)
+    content = bio.getvalue()
+    if len(content) > MAX_FILE_MB * 1024 * 1024:
+        raise ValueError(f"Файл больше {MAX_FILE_MB} МБ")
+    filename = f"{prefix}_{int(time.time())}{ext}"
+    return filename, content, ext.lower()
+
+async def save_bytes_local(filename: str, content: bytes) -> str:
+    os.makedirs("files", exist_ok=True)
+    full = os.path.join("files", filename)
+    async with aiofiles.open(full, "wb") as f:
+        await f.write(content)
+    return full
+
+def extract_text_from_pdf_bytes(content: bytes) -> str:
+    reader = PdfReader(BytesIO(content))
+    out = []
+    for p in reader.pages:
+        out.append(p.extract_text() or "")
+    return "\n".join(out).strip()
+
+def extract_text_from_docx_bytes(content: bytes) -> str:
+    bio = BytesIO(content)
+    doc = DocxDocument(bio)
+    return "\n".join(p.text for p in doc.paragraphs).strip()
+
+def ocr_tesseract_image_bytes(content: bytes, lang: str = OCR_LANG) -> str:
+    img = Image.open(BytesIO(content))
+    import pytesseract
+    return pytesseract.image_to_string(img, lang=lang).strip()
+
+def ocr_openai_image_bytes(content: bytes) -> tuple[str, int]:
+    """
+    Используем GPT-4o для OCR/рукописей. Возвращаем (text, used_tokens).
+    """
+    b64 = base64.b64encode(content).decode("utf-8")
+    # Chat Completions с изображением
+    resp = client.chat.completions.create(
+        model=MODEL,  # gpt-4o
+        messages=[{
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Извлеки весь текст с изображения. Сохрани строки и порядок. Без комментариев."},
+                {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}}
+            ]
+        }]
+    )
+    text = resp.choices[0].message.content or ""
+    used = resp.usage.total_tokens if resp.usage else 0
+    return text.strip(), used
+
+def guess_mediatype(ext: str, mime: str | None = None) -> str:
+    ext = (ext or "").lower()
+    if mime and "pdf" in mime: return "pdf"
+    if ext in [".pdf"]: return "pdf"
+    if ext in [".docx"]: return "docx"
+    if ext in [".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff"]: return "image"
+    return "bin"
+
+# Ниже Хендлеры: документы и фото
+
+@dp.message(F.document)
+async def on_document(m: Message):
+    if not access(m.from_user.id):
+        await m.reply("🚫 Доступ ограничен.")
+        return
+
+    doc = m.document
+    try:
+        await bot.send_chat_action(m.chat.id, "upload_document")
+    except:
+        pass
+
+    try:
+        filename, content, ext = await download_by_file_id(doc.file_id, prefix="doc")
+        path = await save_bytes_local(filename, content)
+        kind = guess_mediatype(ext, doc.mime_type)
+
+        # Базовый ответ
+        base_info = f"📥 Документ: *{doc.file_name or filename}*\nТип: `{kind}`\nСохранено: `{path}`"
+
+        # Извлечение текста по типу
+        extracted = ""
+        used_tokens = 0
+
+        if kind == "pdf":
+            extracted = extract_text_from_pdf_bytes(content)
+        elif kind == "docx":
+            extracted = extract_text_from_docx_bytes(content)
+        elif kind == "image":
+            if OCR_ENGINE == "openai":
+                extracted, used_tokens = ocr_openai_image_bytes(content)
+            else:
+                extracted = ocr_tesseract_image_bytes(content, OCR_LANG)
+        else:
+            await m.reply(base_info + "\n\nЭтот тип пока не обрабатываю. Отправь PDF/DOCX/изображение.")
+            return
+
+        if not extracted.strip():
+            await m.reply(base_info + "\n\nТекст не найден или не распознан.")
+            return
+
+        # Сохраняем в историю и считаем квоту
+        c = db()
+        uid = m.from_user.id
+        chat_id = ensure_active_chat(c, uid)
+
+        prompt = f"Распознанный текст из файла {doc.file_name or filename}:\n\n{extracted[:8000]}"
+        add_msg(c, uid, chat_id, "user", prompt)
+
+        est_in = len(prompt) // 4
+        if not can_spend(c, uid, est_in + used_tokens):
+            await m.reply("❌ Превышен лимит токенов на сегодня.")
+            return
+
+        # Дальше можно сразу попросить модель сделать резюме/форматирование
+        await bot.send_chat_action(m.chat.id, "typing")
+        system_prompt = {
+            "role": "system",
+            "content": (
+                "Ты ассистент MOS-GSM. Кратко структурируй распознанный текст: "
+                "сделай заголовок, тезисы-списком, при необходимости — вопросы по уточнению. Markdown."
+            )
+        }
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[system_prompt, {"role":"user","content":extracted[:15000]}]
+        )
+        answer = format_answer(resp.choices[0].message.content or "")
+        add_msg(c, uid, chat_id, "assistant", answer)
+        add_tokens(c, uid, (resp.usage.total_tokens if resp.usage else est_in) + used_tokens)
+
+        await m.reply(base_info + "\n\n" + answer, reply_markup=reply_menu())
+
+    except Exception as e:
+        await m.reply(f"❌ Ошибка при обработке файла: `{e}`")
+
+@dp.message(F.photo)
+async def on_photo(m: Message):
+    if not access(m.from_user.id):
+        await m.reply("🚫 Доступ ограничен.")
+        return
+
+    try:
+        await bot.send_chat_action(m.chat.id, "upload_photo")
+    except:
+        pass
+
+    try:
+        ph = m.photo[-1]  # максимальное качество
+        filename, content, ext = await download_by_file_id(ph.file_id, prefix="photo")
+        path = await save_bytes_local(filename, content)
+
+        # OCR
+        if OCR_ENGINE == "openai":
+            extracted, used_tokens = ocr_openai_image_bytes(content)
+        else:
+            extracted = ocr_tesseract_image_bytes(content, OCR_LANG)
+            used_tokens = 0
+
+        base_info = f"🖼 Фото сохранено: `{path}`"
+
+        if not extracted.strip():
+            await m.reply(base_info + "\n\nТекст не найден/не распознан. Попробуй сделать фото чётче.")
+            return
+
+        # Сохраняем и отправляем структурированный результат
+        c = db()
+        uid = m.from_user.id
+        chat_id = ensure_active_chat(c, uid)
+
+        user_note = (m.caption or "").strip()
+        task = user_note if user_note else "Переведи текст с фото в печатный вид и оформи структурно."
+        prompt = f"{task}\n\nТекст с фото:\n{extracted[:8000]}"
+        add_msg(c, uid, chat_id, "user", prompt)
+
+        est_in = len(prompt) // 4
+        if not can_spend(c, uid, est_in + used_tokens):
+            await m.reply("❌ Превышен лимит токенов на сегодня.")
+            return
+
+        await bot.send_chat_action(m.chat.id, "typing")
+        system_prompt = {
+            "role": "system",
+            "content": "Ты ассистент MOS-GSM. Преобразуй текст в читабельный вид: сохрани абзацы, списки. Markdown."
+        }
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[system_prompt, {"role":"user","content":prompt}]
+        )
+        answer = format_answer(resp.choices[0].message.content or "")
+        add_msg(c, uid, chat_id, "assistant", answer)
+        add_tokens(c, uid, (resp.usage.total_tokens if resp.usage else est_in) + used_tokens)
+
+        await m.reply(base_info + "\n\n" + answer, reply_markup=reply_menu())
+
+    except Exception as e:
+        await m.reply(f"❌ Ошибка при обработке фото: `{e}`")
+
+# Чтобы бот мог вернуть файл
+
+@dp.message(Command("send_example"))
+async def send_example(m: Message):
+    path = os.path.join("files", "example.txt")
+    os.makedirs("files", exist_ok=True)
+    async with aiofiles.open(path, "w", encoding="utf-8") as f:
+        await f.write("Пример файла от бота MOS-GSM.")
+    async with aiofiles.open(path, "rb") as f:
+        await m.answer_document(f, caption="Вот пример файла 📄")
+
 # ===== RUN =====
 async def main():
     await dp.start_polling(bot)
