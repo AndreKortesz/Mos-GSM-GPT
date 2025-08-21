@@ -303,32 +303,34 @@ async def chat(m: Message):
         pass
 
     try:
-    system_prompt = {
-        "role": "system",
-        "content": (
-            "Ты умный ассистент компании MOS-GSM. Отвечай как ChatGPT Plus: "
-            "полно и по делу, сохраняй форматирование (Markdown), используй списки/заголовки, emoji, ссылки и блоки кода. "
-            "ВНИМАНИЕ: не используй #-заголовки. Все заголовки оформляй просто жирным (**Заголовок**)."
+        system_prompt = {
+            "role": "system",
+            "content": (
+                "Ты умный ассистент компании MOS-GSM. Отвечай как ChatGPT Plus: "
+                "полно и по делу, сохраняй форматирование (Markdown), используй списки/заголовки, emoji, ссылки и блоки кода. "
+                "ВНИМАНИЕ: не используй #-заголовки. Все заголовки оформляй просто жирным (**Заголовок**)."
+            )
+        }
+
+        resp = client.chat.completions.create(
+            model=MODEL,
+            messages=[system_prompt] + msgs
         )
-    }
-    resp = client.chat.completions.create(
-        model=MODEL,
-        messages=[system_prompt] + msgs
-    )
-    answer = resp.choices[0].message.content or ""
-    answer = format_answer(answer)  # фильтруем один раз
-    usage = resp.usage.total_tokens if resp.usage else est_in
+        answer = resp.choices[0].message.content
+        answer = format_answer(answer)
+        usage = resp.usage.total_tokens if resp.usage else est_in
 
-    add_msg(c, uid, chat_id, "assistant", answer)
-    add_tokens(c, uid, usage)
+        add_msg(c, uid, chat_id, "assistant", answer)
+        add_tokens(c, uid, usage)
 
-    await m.reply(
-        answer,
-        reply_markup=reply_menu()
-        # parse_mode="Markdown"  # можно не указывать, если уже задано в DefaultBotProperties
-    )
-except Exception as e:
-    await m.reply(f"❌ Ошибка OpenAI: `{e}`", reply_markup=reply_menu())
+        await m.reply(
+            answer,
+            reply_markup=reply_menu(),
+            parse_mode="Markdown"
+        )
+
+    except Exception as e:
+        await m.reply(f"❌ Ошибка OpenAI: `{e}`", reply_markup=reply_menu())
 
 #Ниже то, что касается отрпавки и получения файлов
 
