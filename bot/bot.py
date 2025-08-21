@@ -290,6 +290,7 @@ async def chat(m: Message):
             "content": (
                 "Ты умный ассистент компании MOS‑GSM. Отвечай как ChatGPT Plus: "
                 "полно и по делу, сохраняй форматирование (Markdown), используй списки/заголовки, emoji, ссылки и блоки кода."
+                "ВНИМАНИЕ: не используй #-заголовки. Все заголовки оформляй просто жирным (**Заголовок**)."
             )
         }
         resp = client.chat.completions.create(
@@ -450,6 +451,7 @@ async def on_document(m: Message):
             "content": (
                 "Ты ассистент MOS-GSM. Кратко структурируй распознанный текст: "
                 "сделай заголовок, тезисы-списком, при необходимости — вопросы по уточнению. Markdown."
+                "Не используй #-заголовки, заголовки делай жирным (**Заголовок**)."
             )
         }
         resp = client.chat.completions.create(
@@ -513,6 +515,7 @@ async def on_photo(m: Message):
         system_prompt = {
             "role": "system",
             "content": "Ты ассистент MOS-GSM. Преобразуй текст в читабельный вид: сохрани абзацы, списки. Markdown."
+            "Не используй #-заголовки, заголовки делай жирным (**Заголовок**)."
         }
         resp = client.chat.completions.create(
             model=MODEL,
