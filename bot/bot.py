@@ -323,7 +323,7 @@ async def chat(m: Message):
         add_tokens(c, uid, usage)
 
         await m.reply(
-    format_answer(answer),
+    answer,
     reply_markup=reply_menu(),
     parse_mode="Markdown"
 )
